@@ -1,0 +1,18 @@
+gradle-wrapper.jar
+.gradle/
+/.gradle/
+.kotlin/
+/.kotlin/
+build/
+/build/
+/captures/
+/local.properties
+local.properties
+*.iml
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Keystores & sensitive keys
+key.properties
+**/*.keystore
+**/*.jks

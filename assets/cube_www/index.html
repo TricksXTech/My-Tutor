@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' data: blob:;">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="msapplication-tap-highlight" content="no">
+  <meta name="viewport" content="user-scalable=no, initial-scale=1, maximum-scale=1, minimum-scale=1, width=device-width">
+  <title>Offline Rubik's Cube Solver (Kociemba Two-Phase)</title>
+  
+  <style>
+    /* Theme Sync with My Tutor Dark Theme */
+    :root {
+      --app-bg: #121212;
+      --app-card: #1E1E2C;
+      --app-card2: #252538;
+      --app-border: #33334A;
+      --app-cyan: #00CEC9;
+      --app-orange: #6C5CE7;
+      --app-cyan-dim: #005f73;
+      --app-cyan-veil: rgba(0, 206, 201, 0.12);
+      --app-ellipse: #6C5CE7;
+      --app-text: #FFFFFF;
+      --app-toggle-off: #374151;
+    }
+    body {
+      background-color: var(--app-bg) !important;
+      color: var(--app-text) !important;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+  </style>
+
+  <script>
+    // 1. Android Native Bridge Polyfill
+    window.Android = {
+      openStore: function() { return "com.jeffprod.cubesolver"; },
+      openPlayStore: function() { return "com.jeffprod.cubesolver"; },
+      playSound: function(name) {
+        if (window.CubeSolverBridge && window.CubeSolverBridge.postMessage) {
+          window.CubeSolverBridge.postMessage(JSON.stringify({ type: 'sound', name: name }));
+        }
+      },
+      appReady: function() {
+        if (window.CubeSolverBridge && window.CubeSolverBridge.postMessage) {
+          window.CubeSolverBridge.postMessage(JSON.stringify({ type: 'ready' }));
+        }
+      },
+      showAdInterstitielle: function() {},
+      rateApp: function() {},
+      getLanguage: function() { return "en"; },
+      logError: function(err) { console.error('CubeSolver Log:', err); },
+      openURL: function(url) {},
+      shareText: function(txt) {}
+    };
+
+    // 2. Anti-tamper & Clone bypass
+    window.isAppCloned = function() { return false; };
+
+    // 3. LocalStorage Pre-population: Full Unlock & Local Ping Cache
+    try {
+      localStorage.setItem("ulcsall", "ok");
+      localStorage.setItem("csping_data", JSON.stringify({
+        timestamp: Date.now() + 315360000000,
+        servers: [{ domain: "offline", ping: 1 }]
+      }));
+    } catch (e) {
+      console.warn("localStorage init error:", e);
+    }
+
+    // 4. Zero-Network Solver Interceptor
+    // Routes all remote solving requests to Herbert Kociemba's Two-Phase on-device Dart solver
+    (function() {
+      const origFetch = window.fetch;
+      window.fetch = function(input, init) {
+        const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+
+        // Immediate ping/config response
+        if (url.includes('/ping')) {
+          return Promise.resolve(new Response(JSON.stringify({ status: "ok" }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          }));
+        }
+        if (url.includes('/promo') || url.includes('/config')) {
+          return Promise.resolve(new Response(JSON.stringify({}), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          }));
+        }
+
+        // Solver endpoints: /cube2x2/, /cube3x3/, /cfopcube3x3, /cube4x4/, /cube5x5, /skewb, /ivy, /pyraminx, /dino, /towercube
+        if (url.includes('/cube2x2/') || url.includes('/cube3x3/') || url.includes('/cfopcube3x3') || url.includes('/cube4x4/') || url.includes('/cube5x5') || url.includes('/skewb') || url.includes('/ivy') || url.includes('/pyraminx') || url.includes('/dino') || url.includes('/towercube')) {
+          return new Promise(function(resolve) {
+            const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substring(2);
+            window['__solver_cb_' + reqId] = function(responseObj) {
+              delete window['__solver_cb_' + reqId];
+              resolve(new Response(JSON.stringify(responseObj), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' }
+              }));
+            };
+
+            let bodyStr = null;
+            if (init && init.body) {
+              bodyStr = init.body.toString();
+            }
+
+            if (window.CubeSolverBridge && window.CubeSolverBridge.postMessage) {
+              window.CubeSolverBridge.postMessage(JSON.stringify({
+                id: reqId,
+                url: url,
+                method: (init && init.method) ? init.method : 'GET',
+                body: bodyStr
+              }));
+            } else {
+              resolve(new Response(JSON.stringify({ msg: 'Solver bridge connecting...' }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' }
+              }));
+            }
+          });
+        }
+
+        return Promise.resolve(new Response(JSON.stringify({}), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        }));
+      };
+    })();
+  </script>
+
+  <link rel="stylesheet" href="build/bundle.css">
+  <script defer src="build/bundle.js"></script>
+</head>
+<body class="bg-app-bg">
+</body>
+</html>
