@@ -82,3 +82,9 @@ My Tutor features a trilingual educational engine with instant multi-language sw
   * One-tap **Clear Room Chat** with safety confirmation dialog.
   * **Clear All Data** in Settings for a full reset.
 * **Legal Transparency:** Built-in Terms of Use, Privacy Policy, and Open Source License inspection.
+
+  ## Upcoming Features
+  * **Mock Test:** User's activity/units as per subject mock test questions ( user can set  no. of questions as per their choice ).
+  * **Syllabus Tracking/Progress :** User can upload their syllabus and track their progress.
+  * **Smart Study Planner :** My tutor can track their progress of their syllabus and it can suggest what he/she needs to cover.
+  * **Multilingual Learning :** Upcoming updates will have multilanguage learning experience to the users. 
