@@ -351,7 +351,7 @@ class LlmService {
           useMmap: true, // Memory-map to avoid OOM
         ),
         contextParams: const ContextParams(
-          nCtx: 4096,
+          nCtx: 2048,
           nBatch: 512,
           nUbatch: 512,
           nThreads: 4,
@@ -814,7 +814,7 @@ class LlmService {
               : (targetModelToUse.contains('Qwen')
                   ? 'Qwen 2.5 (1.5B)'
                   : 'Llama 3.2 (1B)');
-          debugPrint('Executing on-device GGUF inference using $targetModelToUse with 768 maxTokens...');
+          debugPrint('Executing on-device GGUF inference using $targetModelToUse with 384 maxTokens...');
           final rawText = await _runGgufInference(
             file.path,
             userPrompt,
@@ -825,7 +825,7 @@ class LlmService {
             responseLanguage: responseLanguage,
             onProgress: onProgress,
             engineName: engineName,
-          ).timeout(const Duration(seconds: 120));
+          ).timeout(const Duration(seconds: 180));
 
           final formatted = formatMathTypography(rawText);
           final text = responseLanguage == 'hinglish'
@@ -872,7 +872,6 @@ class LlmService {
     }
 
     // 3. Local Built-in Reasoning Engine (100% Offline Emergency Fallback)
-    await Future.delayed(const Duration(milliseconds: 200));
     final fallbackRaw = _generateDynamicTutorResponse(
       userPrompt,
       subjectName,
@@ -883,8 +882,17 @@ class LlmService {
     final formatted = formatMathTypography(fallbackRaw);
     final fallbackText = TranslationService().translateText(formatted, responseLanguage);
 
+    // Stream character-to-character in real time via onProgress callback
     if (onProgress != null) {
-      onProgress(fallbackText, 'Prof. AI (Offline Engine)');
+      final chunkSize = 3;
+      final buffer = StringBuffer();
+      for (int i = 0; i < fallbackText.length; i += chunkSize) {
+        if (_stopRequested) break;
+        final end = (i + chunkSize < fallbackText.length) ? i + chunkSize : fallbackText.length;
+        buffer.write(fallbackText.substring(i, end));
+        onProgress(buffer.toString(), 'Prof. AI (Offline Engine)');
+        await Future.delayed(const Duration(milliseconds: 12));
+      }
     }
 
     return TutorReplyResult(
@@ -1058,12 +1066,30 @@ class LlmService {
     final stopwatch = Stopwatch()..start();
     int lastProgressMs = 0;
 
+    String cleanDisplay(String raw) {
+      return formatMathTypography(stripThinkingTags(raw))
+          .replaceAll('<start_of_turn>', '')
+          .replaceAll('<end_of_turn>', '')
+          .replaceAll('<turn|>', '')
+          .replaceAll('<|turn>', '')
+          .replaceAll('<|im_start|>', '')
+          .replaceAll('<|im_end|>', '')
+          .replaceAll('<|eot_id|>', '')
+          .replaceAll('<|start_header_id|>', '')
+          .replaceAll('<|end_header_id|>', '')
+          .replaceAll(RegExp(r'^model\s*', multiLine: true), '')
+          .trim();
+    }
+
     void notifyProgressThrottled({bool force = false}) {
       if (onProgress == null) return;
       final now = stopwatch.elapsedMilliseconds;
-      if (force || now - lastProgressMs >= 70) {
+      if (force || now - lastProgressMs >= 20) {
         lastProgressMs = now;
-        onProgress(formatMathTypography(stripThinkingTags(buffer.toString())), engineName);
+        final display = cleanDisplay(buffer.toString());
+        if (display.isNotEmpty) {
+          onProgress(display, engineName);
+        }
       }
     }
 
@@ -1071,17 +1097,30 @@ class LlmService {
       await for (final event in session.generate(
         prompt: fullPrompt,
         parseSpecial: true,
-        sampler: const SamplerParams(temperature: 0.7, topP: 0.9),
-        maxTokens: 2048,
+        sampler: const SamplerParams(
+          temperature: 0.25,
+          topP: 0.85,
+          repeatPenalty: 1.15,
+        ),
+        maxTokens: 384,
       )) {
         if (_stopRequested) {
           debugPrint('GGUF on-device generation interrupted on student request.');
           break;
         }
         if (event is TokenEvent) {
-          buffer.write(event.text);
-          final isPunctuationBreak = event.text.endsWith('\n') || event.text.endsWith('. ') || event.text.endsWith('! ');
-          notifyProgressThrottled(force: isPunctuationBreak && (stopwatch.elapsedMilliseconds - lastProgressMs >= 40));
+          final text = event.text;
+          if (text.contains('<end_of_turn>') ||
+              text.contains('<|im_end|>') ||
+              text.contains('<|eot_id|>') ||
+              text.contains('<|endoftext|>') ||
+              text.contains('<turn|>')) {
+            debugPrint('Hit canonical end-of-turn token, stopping generation.');
+            break;
+          }
+          buffer.write(text);
+          final isPunctuationBreak = text.endsWith('\n') || text.endsWith('. ') || text.endsWith('! ');
+          notifyProgressThrottled(force: isPunctuationBreak && (stopwatch.elapsedMilliseconds - lastProgressMs >= 10));
         } else if (event is DoneEvent) {
           if (event.trailingText.isNotEmpty) {
             buffer.write(event.trailingText);
@@ -1802,16 +1841,28 @@ class LlmService {
           lowerQ.contains('who are you') ||
           lowerQ.contains('model');
 
-      final isFollowUp = lowerQ.startsWith('now ') ||
+      final hasIndependentIntent = lowerQ.contains('explain') ||
+          lowerQ.contains('what is') ||
+          lowerQ.contains('whats') ||
+          lowerQ.contains("what's") ||
+          lowerQ.contains('define') ||
+          lowerQ.contains('bodmas') ||
+          lowerQ.contains('pemdas') ||
+          lowerQ.contains('rule') ||
+          lowerQ.contains('kya hai') ||
+          lowerQ.contains('kya hota') ||
+          lowerQ.contains('batao') ||
+          lowerQ.contains('kaise') ||
+          lowerQ.contains('why') ||
+          lowerQ.contains('how');
+
+      final isFollowUp = !hasIndependentIntent && (
+          lowerQ.startsWith('now ') ||
           lowerQ.startsWith('or ') ||
           lowerQ.startsWith('again ') ||
-          lowerQ.startsWith('using ') ||
-          lowerQ.startsWith('with ') ||
-          lowerQ.startsWith('what about ') ||
-          lowerQ.startsWith('by ') ||
-          (lowerQ.length < 35 && !lowerQ.contains('=') && !lowerQ.contains('solve'));
+          lowerQ.startsWith('what about '));
 
-      if (!isHardwareOrDoc && hasMathInPrior && isFollowUp && lastUserMessage.isNotEmpty) {
+      if (!isHardwareOrDoc && !hasIndependentIntent && hasMathInPrior && isFollowUp && lastUserMessage.isNotEmpty) {
         final mathRegex = RegExp(r'([a-zA-Z0-9\^_\+\-\*/\(\)\s=²³]{3,})');
         final match = mathRegex.firstMatch(lastUserMessage.replaceAll(RegExp(r'\b(solve|find|evaluate|differentiate|integrate|using|by|with)\b', caseSensitive: false), ''));
         final priorExpr = match != null && match.group(0)!.trim().length >= 2
@@ -2046,6 +2097,19 @@ STUDENT QUERY: "$query"''';
           '- 🔬 **Engineering Physics & Chemistry:** Optics, Laser, Quantum, Polymers\n'
           '- 🌳 **Data Structures & Algorithms:** Trees, Graphs, Sorting, Dynamic Programming\n\n'
           'Bataiye, kya sawal hai aapka? Main step-by-step explain karti hoon!';
+    }
+
+    // =========================================================================
+    // 0.05 BODMAS / PEMDAS / ORDER OF OPERATIONS
+    // =========================================================================
+    final isBodmasQuery = lower.contains('bodmas') ||
+        lower.contains('pemdas') ||
+        lower.contains('order of operation') ||
+        lower.contains('rule of operation') ||
+        lower.contains('operator precedence');
+
+    if (isBodmasQuery) {
+      return _generateBodmasResponse(query);
     }
 
     // =========================================================================
@@ -2931,20 +2995,20 @@ STUDENT QUERY: "$query"''';
           'Aapko kisi specific chemical reaction ya numerical par deeper explanation chahiye?';
     }
 
-    return 'Bohot badhiya aur thoughtful question poocha hai aapne: **$cleanTopic**!\n\n'
-        'Chalo is concept ko bilkul crystal clear, step-by-step tareeqe se samjhein:\n\n'
+    return 'Bohot badhiya question poocha hai aapne: **$cleanTopic**!\n\n'
+        'Chalo **$cleanTopic** ko bilkul crystal-clear, step-by-step tareeqe se samjhein:\n\n'
         '### 🎯 1. Core Fundamental Concept:\n'
-        '**$cleanTopic** basically $subject ($chapter) ka ek critical engineering concept hai. '
-        'Iska main role real-world engineering problem-solving aur theoretical formulation ko practical implementation mein convert karna hai.\n\n'
-        '### 💡 2. Step-by-Step Architecture & Mechanism:\n'
-        '- **Foundation & Input Parameters:** Pehle boundary conditions, variables aur system requirements define kiye jaate hain.\n'
-        '- **Core Governing Flow:** Execution phase mein core theoretical rules, constraints aur optimization ensure hoti hai.\n'
-        '- **Verification & Output:** Final output stability, error-tolerance aur benchmark standards ko satisfy karta hai.\n\n'
-        '### 📝 3. University Exam & Technical Interview Strategy:\n'
-        '- **Exact Definition:** Answer sheet mein pehle 2 lines mein clear technical definition zaroor likhein.\n'
-        '- **Diagram / Flowchart:** Viva ya semester exam mein clean labeled diagram ya flowchart banane se direct maximum marks secure hote hain.\n'
-        '- **Edge Cases:** Boundary conditions aur common pitfalls ka zikr karein.\n\n'
-        'Bataiye, is topic mein kisi specific sub-part, formula, derivation ya practical code example par deeper focus karna hai? Hum turant explain karenge!';
+        '**$cleanTopic** $subject ($chapter) ka ek essential topic hai. '
+        'Iska primary objective complex analytical problems ko logically break down karke clear, structured aur accurate solutions produce karna hai.\n\n'
+        '### 💡 2. Step-by-Step Logic & Working Principle:\n'
+        '- **Initial Analysis:** Sabse pehle diye gaye parameters, variables aur rules ko clearly state kiya jata hai.\n'
+        '- **Governing Principles:** Subject ke core theoretical laws, formulas aur operational logic ko systematically apply karte hain.\n'
+        '- **Result & Accuracy:** Final outcome standard rules aur benchmark accuracy standards ko verify karke arrive hota hai.\n\n'
+        '### 📝 3. University Exam & Viva Strategy:\n'
+        '- **Precise Definition:** Answer sheet ya viva mein pehle 2 lines mein clear technical definition zaroor quote karein.\n'
+        '- **Worked Example / Diagram:** Marks maximize karne ke liye clean labeled diagram, formula box ya worked example add karein.\n'
+        '- **Common Mistakes to Avoid:** Conceptual edge cases aur signs ka dhyan rakhein.\n\n'
+        'Bataiye, **$cleanTopic** ke kisi specific formula, derivation, numerical example ya practical code par deeper focus karna hai? Hum milkar step-by-step explain karenge!';
   }
 
   /// Extracts core technical topic from student query by stripping conversational filler words
@@ -2976,6 +3040,59 @@ STUDENT QUERY: "$query"''';
       return chapter;
     }
     return subject.isNotEmpty && subject != 'general_doubt_subject' ? subject : 'Core Engineering Concept';
+  }
+
+  /// High-accuracy, pedagogical explanation for BODMAS / PEMDAS and arithmetic order of operations
+  String _generateBodmasResponse(String query) {
+    return r'''Bohot hi zaroori aur foundational mathematical rule poocha hai aapne: **BODMAS / PEMDAS Rule**!
+
+Jab kisi mathematical expression mein ek se zyada operations (brackets, multiply, divide, add, subtract) aate hain, tab **BODMAS** rule decide karta hai ki calculation ka sahi aur standardized order kya hoga.
+
+---
+
+### 📌 1. BODMAS Ka Full Form & Precedence Order:
+
+1. **B - Brackets (कोष्ठक):**
+   - Sabse pehle brackets ke andar ki terms solve hoti hain.
+   - Brackets ka evaluation order: **Vinculum/Bar $\overline{a-b}$ $\rightarrow$ Round Brackets `()` $\rightarrow$ Curly Brackets `{}` $\rightarrow$ Square Brackets `[]`**.
+2. **O - Orders / Exponents / Of (घात एवं का):**
+   - Powers (jaise $x^2$, $3^3$), Square Roots ($\sqrt{25}$), aur "Of" (jaise $\frac{1}{2}$ of $100 = 50$).
+3. **D - Division (भाग $\div$) & M - Multiplication (गुणा $\times$):**
+   - **Crucial Rule:** Division aur Multiplication ki **equal priority (barabar tarjeeh)** hoti hai! Inhe hamesha **Left to Right (बायें से दायें)** solve kiya jaata hai.
+4. **A - Addition (जोड़ $+$) & S - Subtraction (घटाव $-$):**
+   - Addition aur Subtraction ki bhi **equal priority** hoti hai! Inhe bhi **Left to Right** order mein evaluate kiya jaata hai.
+
+*(Note: International / US syllabus mein isko **PEMDAS** kaha jata hai: Parentheses, Exponents, Multiplication, Division, Addition, Subtraction).*
+
+---
+
+### 🎯 2. Step-by-Step Worked Example:
+
+Aao is standard expression ko step-by-step solve karein:
+$$\mathbf{25 - 2 \times (3 + 2)^2 \div 10}$$
+
+- **Step 1 (Brackets):** Pehle bracket `(3 + 2)` solve karein:
+  $$(3 + 2) = 5 \implies 25 - 2 \times 5^2 \div 10$$
+- **Step 2 (Orders / Exponents):** Ab power $5^2$ evaluate karein:
+  $$5^2 = 25 \implies 25 - 2 \times 25 \div 10$$
+- **Step 3 (Multiply & Divide Left to Right):**
+  - Left mein multiplication pehle hai: $2 \times 25 = 50 \implies 25 - 50 \div 10$
+  - Ab division hai: $50 \div 10 = 5 \implies 25 - 5$
+- **Step 4 (Subtraction):**
+  $$25 - 5 = 20$$
+
+$$\mathbf{\text{Final Answer} = 20}$$
+
+---
+
+### ⚠️ 3. Common Student Pitfalls (Exam Traps):
+- **Trap 1 (Blind Division):** Bohot se students sochte hain "D pehle hai toh division pehle hoga". Aisa nahi hai! Agar multiplication left mein pehle aaye (jaise $100 \times 2 \div 4$), toh pehle multiply hoga ($200 \div 4 = 50$).
+- **Trap 2 (Minus Signs):** Jab bracket ke bahar minus sign ho, toh andar ke saare signs change hote hain: $-(a - b) = -a + b$.
+
+### 🎓 B.Tech & Coding Compilers Connection:
+C, Python, Java aur Dart ke compilers mein operator precedence table exact BODMAS/PEMDAS hierarchy follow karti hai!
+
+Aapke paas koi specific arithmetic equation ya problem hai? Formula likhein, hum milkar step-by-step solve karenge!''';
   }
 }
 

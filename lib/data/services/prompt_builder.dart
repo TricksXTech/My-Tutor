@@ -135,74 +135,62 @@ class PromptBuilder {
     return buffer.toString();
   }
 
-  /// Google Gemma format:
-  /// Gemma 4 has native system/developer role support with `<|turn>` and `<turn|>`.
-  /// Older Gemma (2/3) folds into `<start_of_turn>` and `<end_of_turn>`.
+  /// Google Gemma canonical chat template:
+  /// Uses official special tokens: `<start_of_turn>user\n...<end_of_turn>\n<start_of_turn>model\n...<end_of_turn>`
   static String _formatGemma({
     required String systemPrompt,
     required String? attachmentBlock,
     required List<Map<String, String>> history,
     required String userQuery,
-    required bool isGemma4,
+    bool isGemma4 = true,
   }) {
     final buffer = StringBuffer();
 
-    if (isGemma4) {
-      // Canonical Gemma 4 control tokens: <|turn>{role}\n{content}\n<turn|>
-      buffer.writeln('<|turn>system');
-      buffer.writeln(systemPrompt.trim());
-      buffer.writeln('<turn|>');
-
-      if (attachmentBlock != null && attachmentBlock.isNotEmpty) {
-        buffer.writeln('<|turn>developer');
-        buffer.writeln(attachmentBlock.trim());
-        buffer.writeln('<turn|>');
-      }
-
-      for (final turn in history) {
-        final role = turn['role'] == 'assistant' ? 'model' : 'user';
-        final content = turn['content']?.trim();
-        if (content != null && content.isNotEmpty) {
-          buffer.writeln('<|turn>$role');
-          buffer.writeln(content);
-          buffer.writeln('<turn|>');
-        }
-      }
-
-      buffer.writeln('<|turn>user');
-      buffer.writeln(userQuery.trim());
-      buffer.writeln('<turn|>');
-      buffer.write('<|turn>model\n');
-    } else {
-      // Legacy Gemma 2/3 tokens (<start_of_turn> / <end_of_turn>)
-      buffer.writeln('<start_of_turn>user');
-      buffer.writeln(systemPrompt.trim());
-      if (attachmentBlock != null && attachmentBlock.isNotEmpty) {
-        buffer.writeln('\n$attachmentBlock');
-      }
-      buffer.writeln('<end_of_turn>');
-
-      for (final turn in history) {
-        final role = turn['role'] == 'assistant' ? 'model' : 'user';
-        final content = turn['content']?.trim();
-        if (content != null && content.isNotEmpty) {
-          buffer.writeln('<start_of_turn>$role');
-          buffer.writeln(content);
-          buffer.writeln('<end_of_turn>');
-        }
-      }
-
-      buffer.writeln('<start_of_turn>user');
-      buffer.writeln(userQuery.trim());
-      buffer.writeln('<end_of_turn>');
-      buffer.write('<start_of_turn>model\n');
+    final header = StringBuffer();
+    header.writeln(systemPrompt.trim());
+    if (attachmentBlock != null && attachmentBlock.isNotEmpty) {
+      header.writeln('\n$attachmentBlock');
     }
+
+    if (history.isEmpty) {
+      buffer.writeln('<start_of_turn>user');
+      buffer.writeln(header.toString().trim());
+      buffer.writeln('\n${userQuery.trim()}<end_of_turn>');
+      buffer.write('<start_of_turn>model\n');
+      return buffer.toString();
+    }
+
+    bool systemInjected = false;
+    for (int i = 0; i < history.length; i++) {
+      final turn = history[i];
+      final role = turn['role'] == 'assistant' ? 'model' : 'user';
+      final content = turn['content']?.trim();
+      if (content != null && content.isNotEmpty) {
+        buffer.writeln('<start_of_turn>$role');
+        if (!systemInjected && role == 'user') {
+          buffer.writeln(header.toString().trim());
+          buffer.writeln('');
+          systemInjected = true;
+        }
+        buffer.writeln(content);
+        buffer.writeln('<end_of_turn>');
+      }
+    }
+
+    buffer.writeln('<start_of_turn>user');
+    if (!systemInjected) {
+      buffer.writeln(header.toString().trim());
+      buffer.writeln('');
+    }
+    buffer.writeln(userQuery.trim());
+    buffer.writeln('<end_of_turn>');
+    buffer.write('<start_of_turn>model\n');
 
     return buffer.toString();
   }
 
   /// Qwen 2.5 ChatML format:
-  /// <|im_start|>{role}\n{content}<|im_end|>
+  /// `<|im_start|>{role}\n{content}<|im_end|>`
   static String _formatChatML({
     required String systemPrompt,
     required String? attachmentBlock,
@@ -213,16 +201,13 @@ class PromptBuilder {
 
     buffer.writeln('<|im_start|>system');
     buffer.writeln(systemPrompt.trim());
+    if (attachmentBlock != null && attachmentBlock.isNotEmpty) {
+      buffer.writeln('\n$attachmentBlock');
+    }
     buffer.writeln('<|im_end|>');
 
-    if (attachmentBlock != null && attachmentBlock.isNotEmpty) {
-      buffer.writeln('<|im_start|>context');
-      buffer.writeln(attachmentBlock.trim());
-      buffer.writeln('<|im_end|>');
-    }
-
     for (final turn in history) {
-      final role = turn['role'] ?? 'user';
+      final role = turn['role'] == 'assistant' ? 'assistant' : 'user';
       final content = turn['content']?.trim();
       if (content != null && content.isNotEmpty) {
         buffer.writeln('<|im_start|>$role');
@@ -240,7 +225,7 @@ class PromptBuilder {
   }
 
   /// Meta Llama 3.2 format:
-  /// <|begin_of_text|><|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>
+  /// `<|begin_of_text|><|start_header_id|>{role}<|end_header_id|>\n\n{content}<|eot_id|>`
   static String _formatLlama3({
     required String systemPrompt,
     required String? attachmentBlock,
@@ -252,16 +237,13 @@ class PromptBuilder {
 
     buffer.write('<|start_header_id|>system<|end_header_id|>\n\n');
     buffer.write(systemPrompt.trim());
+    if (attachmentBlock != null && attachmentBlock.isNotEmpty) {
+      buffer.write('\n\n$attachmentBlock');
+    }
     buffer.write('<|eot_id|>');
 
-    if (attachmentBlock != null && attachmentBlock.isNotEmpty) {
-      buffer.write('<|start_header_id|>system\nnotification: context<|end_header_id|>\n\n');
-      buffer.write(attachmentBlock.trim());
-      buffer.write('<|eot_id|>');
-    }
-
     for (final turn in history) {
-      final role = turn['role'] ?? 'user';
+      final role = turn['role'] == 'assistant' ? 'assistant' : 'user';
       final content = turn['content']?.trim();
       if (content != null && content.isNotEmpty) {
         buffer.write('<|start_header_id|>$role<|end_header_id|>\n\n');

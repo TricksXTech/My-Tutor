@@ -355,7 +355,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   if (_gemmaStatus == ModelStatus.ready)
                     _buildActiveRadioOption(
                       title: 'Gemma 4 (2B Parameter)',
-                      subtitle: 'Google Gemma • Primary HackDay Track 1 Model',
+                      subtitle: 'Google Gemma • Primary Model',
                       isSelected: settings.activeGgufModelName == AppConstants.gemmaModelName,
                       onTap: () {
                         settings.setActiveGgufModelName(AppConstants.gemmaModelName);
@@ -408,7 +408,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           // Gemma 4 2B GGUF Option (Hackathon Primary Model)
           _buildModelCard(
             title: 'Gemma 4 - 2B Parameter',
-            subtitle: 'Google Gemma Open-Weight Model (${AppConstants.gemmaModelSize}). Primary model required for Hacktoberfest Track 1.',
+            subtitle: 'Google Gemma Open-Weight Model (${AppConstants.gemmaModelSize}). Primary model suggested.',
             badge: _gemmaStatus == ModelStatus.ready
                 ? 'INSTALLED'
                 : (_gemmaStatus == ModelStatus.downloading ? 'DOWNLOADING' : 'NOT INSTALLED'),

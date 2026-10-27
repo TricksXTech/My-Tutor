@@ -6,14 +6,14 @@
 class TokenBudgetManager {
   TokenBudgetManager._();
 
-  /// Default model context window limit (4096 for local GGUF models)
-  static const int defaultContextWindow = 4096;
+  /// Default model context window limit (2048 for fast on-device inference on mobile)
+  static const int defaultContextWindow = 2048;
 
-  /// Default reserved tokens for model completion
-  static const int defaultReservedGenerationTokens = 1024;
+  /// Default reserved tokens for model completion (512 tokens guarantees fast responses)
+  static const int defaultReservedGenerationTokens = 512;
 
   /// Maximum tokens dedicated to retrieved document attachment chunks
-  static const int maxAttachmentTokens = 1000;
+  static const int maxAttachmentTokens = 600;
 
   /// Fast token estimation: ~4 characters per token
   static int estimateTokens(String text) {

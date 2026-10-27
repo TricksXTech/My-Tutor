@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:isolate';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/constants/app_constants.dart';
 import '../models/subject_model.dart';
